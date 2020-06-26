@@ -1,0 +1,173 @@
+---
+title: "ACS data"
+author: "Kehe Zhang"
+date: "4/16/2020"
+output:
+  pdf_document: default
+  html_document: default
+---
+Data source: U.S. Census Bureau, 2011-2015 American Community Survey 5-Year Estimates
+15 variables were extracted from the 2015 ACS five-year estimation data file in a cleaned dataset "acs_cens.csv".
+The total number of census tracts in the US is 74001.
+
+```{r setup}
+knitr::opts_knit$set(root.dir = 'YOUR DIRECTORY')
+```
+
+
+```{r}
+#Read the data
+acs<- read.csv("acs.csv", stringsAsFactors = FALSE)
+summary(acs)
+```
+
+```{r}
+#Correlation heat map
+cor_var <- acs[,-c(1,2)]
+cormat <- round(cor(cor_var, use="pairwise"),2)
+library(reshape2)
+melted_cormat <- melt(cormat)
+head(melted_cormat)
+library(ggplot2)
+ggplot(data = melted_cormat, aes(x=Var1, y=Var2, fill=value)) + 
+  theme(axis.text.x=element_text(angle = -90, hjust = 0))+
+  geom_tile()
+```
+
+```{r, message=FALSE, warning=FALSE}
+acs2 <- data.frame(lapply(acs[,-c(1:2)], function(x) as.numeric(x)))
+#Impute missing values
+library(missMDA)
+res.comp <- imputePCA(acs2, ncp = 4)
+#PCA
+pca <- prcomp(res.comp$completeObs, center=TRUE, scale. = TRUE)
+summary(pca)
+
+```
+
+```{r, message=FALSE}
+#Screen plot 
+screeplot(pca, type = "l", npcs = 15, main = "Screeplot of the 15 PCs")
+abline(h = 1, col="red", lty=5)
+legend("topright", legend=c("Eigenvalue = 1"),
+       col=c("red"), lty=5, cex=0.6)
+
+#cumulative variance plot
+cum_plot<- cumsum(pca$sdev^2 / sum(pca$sdev^2))
+plot(cum_plot[0:15], xlab = "PC #", ylab = "Amount of explained variance", main = "Cumulative variance plot")
+abline(v = 4, col="blue", lty=5)
+abline(h = 0.70456, col="blue", lty=5)
+legend("topleft", legend=c("Cut-off @ PC4"),
+       col=c("blue"), lty=5, cex=0.6)
+
+#Plot the PCA components
+library(devtools)
+install_github("vqv/ggbiplot")
+library(ggbiplot)
+ggbiplot(pca, scale=0)
+```
+
+
+```{r}
+#Data loading for first 4 PCs
+pca$rotation[,1:4]
+```
+
+PC1 Social-economic advantage (39.16%): need reverse
+Pct_no_high_schoo_diploma
+Pct_unemployment
+Pct_no_insurance
+Pct_below_poverty
+Pct_crowd_housing
+Pct_renters
+Per_capital_income (-)
+Pct_racial_minority
+Pct_single_parent
+
+PC2 Mobility (13.10%):
+Pct_disability (-)
+Pct_under_18
+Pct_over_65 (-)
+
+PC3 Urban core oppotunity advantage (9.367%): need reverse
+Per_capital_income (-)
+Pct_renters(-)
+Pct_no_vehicle(-)
+Pct_under_18
+
+
+PC4 Mixed immigration cohesion and accessibility (8.827%):
+Pct_no_high_schoo_diploma(-)
+Pct_limit_English(-)
+Pct_no_ins (-)
+Pct_crowd_hs (-)
+pct_over_65(-)
+
+
+
+```{r,echo=FALSE,warning=FALSE,message=FALSE,error=FALSE}
+#Create the 4 indices
+library(dplyr)
+library(tidyverse)
+#Construct indices based on PCA results
+scores <- data.frame(pca$x)
+#Flip the sign of PC1 and PC3
+scores$PC1 <- -scores$PC1 
+scores$PC3 <- -scores$PC3
+acs_index<- data.frame(cbind(acs, scores))
+acs_index <- acs_index %>% rename(SES_index=PC1, Mobility_index=PC2, UCO_index=PC3, Accessibility_index=PC4)
+
+```
+
+
+```{r,echo=FALSE,warning=FALSE,message=FALSE,error=FALSE}
+#Add the texas shapefiles
+library(rgdal)
+texas <- readOGR(dsn = 'Texas','TEXAS',verbose=F)
+#Subset the census tracts in county Cameron 
+ACS_Cameron <- subset(texas, COUNTY== "Cameron")
+#merge the datasets 
+ACS_Cameron@data$myID <- 1:nrow(ACS_Cameron@data)
+ACS_Cameron@data <- merge(ACS_Cameron@data, acs_index, by.x="AFFGEOID", by.y="GEO_ID")
+ACS_Cameron@data <- ACS_Cameron@data[order(ACS_Cameron@data$myID),]
+dim(ACS_Cameron)
+```
+
+
+```{r}
+#Make an interactive map for the 4 indices
+library(leaflet)
+varlist <- ACS_Cameron@data[, 144:147]
+map=function(var, title) {
+  l <- leaflet(ACS_Cameron) %>% addTiles()
+pal <- colorNumeric(palette = "YlOrRd", reverse=TRUE, domain = var)
+  labels <- sprintf("Tract_ID: <strong> %s </strong> <br/> Value: %s",
+                  ACS_Cameron$TRACTCE, var) %>%
+          lapply(htmltools::HTML)
+  l %>%
+  addPolygons(
+    color = "grey", weight = 1,
+    fillColor = ~ pal(var), fillOpacity = 0.5,
+    highlightOptions = highlightOptions(weight = 4),
+    label = labels,
+    labelOptions = labelOptions(
+      style = list(
+        "font-weight" = "normal",
+        padding = "3px 8px"
+      ),
+      textsize = "15px", direction = "auto"
+    )
+  ) %>%
+  addLegend(
+    pal = pal, values = ~var, opacity = 0.5,
+    title =title, position = "bottomright"
+  )
+  } 
+len=length(varlist)
+for (i in 1:len) {
+  maps=map(varlist[,i], names(varlist[i]))
+  print(maps)
+}
+```
+
+
