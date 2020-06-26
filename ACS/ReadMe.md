@@ -2,7 +2,7 @@ This folder consists of the ACS data processing and index mapping information
 
 1. ACS data description word doc: description of some selected ACS variables from 2015 American Survey 5 year estimates. The high-lightened variables are the selected 15 variable for creating SES indices.
 
-2. ACS_data_processing.rmd : R codes for downloading and cleaning ACS data using package 
+2. ACS_data_processing.R : R codes for downloading and cleaning ACS data using package tidycensus
 
 3. acs.csv: csv file containing selected ACS data at census tract level for US
 
