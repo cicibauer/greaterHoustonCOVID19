@@ -1,0 +1,141 @@
+---
+title: "Normalization"
+author: "barry"
+date: "6/26/2020"
+output: html_document
+---
+
+
+```{r, include = FALSE}
+#This script contains a set of functions to normalize Safegraph data for you.
+#To add these functions, simply write:
+#source(<address>/safegraph_normalization_functions.R)
+#use the normBG(<patterns>,<home panel summary>) to get visit_counts column in your patterns data.
+library(dplyr)
+library(readr)
+library(tidyverse)
+library(tigris)
+library(censusapi)
+library(sf)
+library(usmap)
+library(mapview)
+library(rjson)
+
+
+
+options(
+  tigris_class = "sf",
+  tigris_use_cache = T # This stores tigris loads somewhere on your machine for much faster personal loading.
+)
+
+Sys.setenv(CENSUS_KEY="5e5c985bc80f5902a674b81c64ce28a377b4bea8")
+
+
+## Basic census data
+#The first variable acs_year, may need to be updated as necessary.
+
+#All data currently using acs_year 2018.
+acs_year = 2018
+```
+
+## Columns of Weekly Patterns and Home Panel
+
+```{r, echo = FALSE, message = FALSE, warning = FALSE}
+
+X2020_06_08_weekly_patterns_csv <- read_csv("C:\\Users\\roone\\Downloads\\FireShot\\safegraph\\2020-06-08-weekly-patterns.csv.gz")
+X2020_06_08_home_panel_summary <- read_csv("C:\\Users\\roone\\Downloads\\FireShot\\safegraph\\2020-06-08-home-panel-summary.csv")
+
+
+colnames(X2020_06_08_weekly_patterns_csv)
+colnames(X2020_06_08_home_panel_summary)
+```
+
+
+## Obtaining Populations using Census API
+```{r X2020_06_08_weekly_patterns_csv}
+#Names of Greater Houston Area counties
+norm_Houston_county_names <-
+  c(
+    "Harris",
+    "Fort Bend",
+    "Montgomery",
+    "Brazoria",
+    "Galveston",
+    "Liberty",
+    "Waller",
+    "Chambers",
+    "Austin"
+  )
+
+#FIPS code of Greater Houston Area counties
+norm_Houston_counties <- unlist(lapply(norm_Houston_county_names, function(x) {fips('TX',paste(x,'County'))}))
+norm_Houston_counties
+
+#Population of Greater Houston Area
+greater_houston_pop <-
+  getCensus(
+    name = "acs/acs1", 
+    vintage = acs_year,  
+    region = "county:*", # Geography 
+    regionin = "state:48", # State 48 is Texas
+    vars = "B01003_001E" # Variables to obtain from census
+  ) %>% 
+  mutate(fips = paste0(state,county)) %>% 
+  filter(fips %in% norm_Houston_counties) %>% 
+  pull(B01003_001E) %>% 
+  sum()
+
+greater_houston_pop
+
+#Houston Area Blockgroups FIPS codes.
+norm_Houston_blockgroups <-
+  norm_Houston_county_names %>%
+  map(function(x){
+    block_groups("TX",x,progress_bar=T) %>%
+      pull(GEOID)
+  }) %>% unlist()
+
+#Texas counties FIPS codes.
+norm_tx_counties_fips <-
+  counties("TX", cb = F, progress_bar=T) %>%
+  pull(COUNTYFP)
+
+```
+
+## Output
+```{r, message=FALSE}
+
+#Function to do Greater Houston normalization using total population
+#param patterns: Safegraph patterns dataset.
+#pre patterns must have the columns: 'raw_visits_counts'.
+#param home_summary: Safegraph home_panel_summary dataset.
+#pre home_summary must have columns 'census_block_group' and 'number_devices_residing'.
+#param houst_blockgroups: list of blockgroup GEOIDs in the Houston area for filtering of the Safegraph datasets.
+#param houst_pop: numeric. Population of Houston Area.
+#returns patterns dataset with column visit_counts that multiples raw visits based on ratio of Houston area population to safegraph population.
+normHouston <- function(patterns, home_summary, Houston_blockgroups = norm_Houston_blockgroups, Houston_pop = greater_houston_pop)
+{
+  #Compute safegraph population from home_summary by takeing Houston blockgroups and adding number of devices.
+  Houston_sg_pop <-
+    home_summary %>%
+    filter(census_block_group %in% Houston_blockgroups) %>%
+    pull(number_devices_residing) %>%
+    sum()
+
+  #Create Houston Area-wide multiplier.
+  Houston_multiplier <- Houston_pop/Houston_sg_pop
+  Houston_multiplier
+
+  return(patterns %>%  mutate(visit_counts = raw_visit_counts*Houston_multiplier))
+}
+
+#summary(X2020_06_08_weekly_patterns_csv)
+X2020_06_08_weekly_patterns_csv <- filter(X2020_06_08_weekly_patterns_csv, region == "TX")
+normalizedWeeklyPatterns <- normHouston(X2020_06_08_weekly_patterns_csv, X2020_06_08_home_panel_summary, norm_Houston_blockgroups, greater_houston_pop)
+colnames(normalizedWeeklyPatterns)
+head(normalizedWeeklyPatterns %>% dplyr::select(location_name, raw_visit_counts, visit_counts))
+
+```
+
+
+
